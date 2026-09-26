@@ -12,6 +12,11 @@ from harness.envs.base import Observation
 class Decision:
     action: str
     thought: str | None = None  # an LLM agent's reasoning, shown in the trace viewer
+    # Usage for the model call(s) behind this decision; None for baselines.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
+    model_latency_ms: float | None = None
 
 
 class Agent(Protocol):

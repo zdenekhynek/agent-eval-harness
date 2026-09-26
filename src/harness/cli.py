@@ -7,11 +7,14 @@ import sys
 from collections.abc import Sequence
 from datetime import datetime
 
-from harness.agents import AGENTS
+from harness.agents import AGENTS, Agent, canonical_name, is_llm, make_agent
+from harness.agents.llm import DEFAULT_MODEL
 from harness.envs import TASKS
+from harness.llmapi import AnthropicClient, APIError, MissingAPIKeyError
 from harness.runner import run_matrix
 from harness.score import format_table, score
 from harness.store import Store
+from harness.trace import Episode
 
 DEFAULT_DB = "runs.db"
 
@@ -21,16 +24,59 @@ def _csv(value: str) -> list[str]:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    unknown = [a for a in args.agents if a not in AGENTS]
-    unknown += [t for t in args.tasks if t not in TASKS]
-    if unknown:
-        print(f"unknown agent/task: {', '.join(unknown)} (see `harness list`)", file=sys.stderr)
+    try:
+        specs = [canonical_name(a, args.model) for a in args.agents]
+    except KeyError as err:
+        print(f"{err.args[0]} (see `harness list`)", file=sys.stderr)
         return 2
+    unknown = [t for t in args.tasks if t not in TASKS]
+    if unknown:
+        print(f"unknown task: {', '.join(unknown)} (see `harness list`)", file=sys.stderr)
+        return 2
+
+    client: AnthropicClient | None = None
+    if any(is_llm(s) for s in specs):
+        try:
+            client = AnthropicClient()
+        except MissingAPIKeyError as err:
+            print(err, file=sys.stderr)
+            return 2
+
+    def factory(spec: str) -> Agent:
+        return make_agent(spec, client, memory=args.memory)
+
+    def progress(ep: Episode) -> None:
+        if not is_llm(ep.agent):
+            return
+        outcome = "solved" if ep.success else "failed"
+        cost = f" ${ep.cost_usd:.4f}" if ep.cost_usd is not None else ""
+        print(f"  {ep.agent} {ep.task} seed {ep.seed}: {outcome} in {ep.steps} steps{cost}")
+
     run_id = args.run_id or datetime.now().strftime("run-%Y%m%d-%H%M%S")
     seeds = range(args.seed_start, args.seed_start + args.seeds)
     with Store(args.db) as store:
-        summary = run_matrix(store, run_id, args.agents, args.tasks, seeds)
+        try:
+            summary = run_matrix(
+                store,
+                run_id,
+                specs,
+                args.tasks,
+                seeds,
+                agent_factory=factory,
+                max_steps=args.max_steps,
+                max_cost_usd=args.max_cost,
+                on_episode=progress,
+            )
+        except APIError as err:
+            print(f"\n{err}", file=sys.stderr)
+            print(f"finished episodes are saved; resume with --run-id {run_id}", file=sys.stderr)
+            return 1
         print(f"{run_id}: ran {summary.ran} episodes, skipped {summary.skipped} already done")
+        if summary.stopped_for_budget:
+            print(
+                f"stopped at the ${args.max_cost:.2f} cost cap; "
+                f"raise --max-cost and resume with --run-id {run_id}"
+            )
         print()
         print(format_table(score(store.episodes(run_id))))
     return 0
@@ -69,18 +115,25 @@ def _cmd_show(args: argparse.Namespace) -> int:
         for step in ep.trace:
             print(f"--- step {step.t} ---")
             print(step.observation)
-            thought = f"  ({step.thought})" if step.thought else ""
+            if step.thought:
+                print(f"--- thought ---\n{step.thought}")
             flag = "  [INVALID]" if step.invalid else ""
-            print(f">>> {step.action}{thought}{flag}  reward={step.reward:.3f}")
+            usage = ""
+            if step.input_tokens is not None:
+                usage = f"  tokens={step.input_tokens}+{step.output_tokens}"
+                if step.cost_usd is not None:
+                    usage += f" ${step.cost_usd:.4f}"
+            print(f">>> {step.action}{flag}  reward={step.reward:.3f}{usage}")
         print("--- final ---")
         print(ep.final_observation)
         outcome = "SUCCESS" if ep.success else ("TRUNCATED" if ep.truncated else "FAILED")
-        print(f"{outcome} in {ep.steps} steps, return {ep.total_return:.3f}")
+        cost = f", ${ep.cost_usd:.4f}" if ep.cost_usd is not None else ""
+        print(f"{outcome} in {ep.steps} steps, return {ep.total_return:.3f}{cost}")
     return 0
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    print("agents:", ", ".join(sorted(AGENTS)))
+    print("agents:", ", ".join(AGENTS), f"(LLM agents take :<model>, default {DEFAULT_MODEL})")
     print("tasks: ", ", ".join(sorted(TASKS)))
     return 0
 
@@ -96,6 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--seeds", type=int, default=20, help="number of seeds")
     run.add_argument("--seed-start", type=int, default=0)
     run.add_argument("--run-id", help="reuse an id to resume an interrupted run")
+    run.add_argument(
+        "--model", default=DEFAULT_MODEL, help="model for LLM agents given without :<model>"
+    )
+    run.add_argument("--max-steps", type=int, help="cap steps per episode (limits LLM cost)")
+    run.add_argument("--max-cost", type=float, help="stop the run once it has spent this many USD")
+    run.add_argument("--memory", type=int, default=8, help="recent steps shown to LLM agents")
     run.set_defaults(func=_cmd_run)
 
     report = sub.add_parser("report", help="score a run (latest by default)")
@@ -103,7 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
     report.set_defaults(func=_cmd_report)
 
     show = sub.add_parser("show", help="step through one episode's trace")
-    show.add_argument("agent")
+    show.add_argument("agent", help="as recorded, e.g. scripted or react:claude-sonnet-5")
     show.add_argument("task")
     show.add_argument("seed", type=int)
     show.add_argument("--run-id")

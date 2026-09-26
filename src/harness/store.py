@@ -29,9 +29,37 @@ CREATE TABLE IF NOT EXISTS episodes (
     duration_ms       REAL NOT NULL,
     final_observation TEXT NOT NULL,
     trace_json        TEXT NOT NULL,
+    input_tokens      INTEGER NOT NULL DEFAULT 0,
+    output_tokens     INTEGER NOT NULL DEFAULT 0,
+    cost_usd          REAL,
     PRIMARY KEY (run_id, agent, task, seed)
 );
 """
+
+# Columns added after the first release, applied to older databases on open.
+MIGRATIONS = {
+    "input_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "output_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "cost_usd": "REAL",
+}
+
+EPISODE_COLUMNS = (
+    "run_id",
+    "agent",
+    "task",
+    "seed",
+    "success",
+    "steps",
+    "total_return",
+    "truncated",
+    "invalid_actions",
+    "duration_ms",
+    "final_observation",
+    "trace_json",
+    "input_tokens",
+    "output_tokens",
+    "cost_usd",
+)
 
 
 class Store:
@@ -40,6 +68,14 @@ class Store:
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        have = {row["name"] for row in self.conn.execute("PRAGMA table_info(episodes)")}
+        for column, decl in MIGRATIONS.items():
+            if column not in have:
+                self.conn.execute(f"ALTER TABLE episodes ADD COLUMN {column} {decl}")
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -79,8 +115,10 @@ class Store:
         return row is not None
 
     def save_episode(self, ep: Episode) -> None:
+        columns = ",".join(EPISODE_COLUMNS)
+        placeholders = ",".join("?" * len(EPISODE_COLUMNS))
         self.conn.execute(
-            """INSERT OR REPLACE INTO episodes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            f"INSERT OR REPLACE INTO episodes ({columns}) VALUES ({placeholders})",
             (
                 ep.run_id,
                 ep.agent,
@@ -94,6 +132,9 @@ class Store:
                 ep.duration_ms,
                 ep.final_observation,
                 json.dumps(ep.trace_dicts()),
+                ep.input_tokens,
+                ep.output_tokens,
+                ep.cost_usd,
             ),
         )
         self.conn.commit()
@@ -126,5 +167,8 @@ def _to_episode(row: sqlite3.Row, with_trace: bool) -> Episode:
         invalid_actions=row["invalid_actions"],
         duration_ms=row["duration_ms"],
         final_observation=row["final_observation"],
+        input_tokens=row["input_tokens"],
+        output_tokens=row["output_tokens"],
+        cost_usd=row["cost_usd"],
         trace=trace,
     )
