@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import random
 from collections import deque
-from typing import Any
 
 from harness.agents.base import Decision
 from harness.envs.base import Observation
-from harness.envs.doorkey import DIRECTIONS
+from harness.envs.grid import DIRECTIONS
 
 Pos = tuple[int, int]
+
+# Cells the scripted agent will walk through. Lava is enterable but never safe.
+SAFE = frozenset({".", "G", "_"})
 
 
 class RandomAgent:
@@ -28,34 +30,36 @@ class RandomAgent:
         return Decision(self._rng.choice(observation.actions))
 
 
-class ScriptedDoorKeyAgent:
-    """Optimal-ish DoorKey solver that reads privileged state.
+class ScriptedAgent:
+    """Near-optimal gridworld solver that reads privileged state.
 
     It replans every step with a breadth-first search over (position,
-    direction): face the key and pick it up, face the door and unlock it,
-    then walk onto the goal. It is the ceiling an LLM agent is measured
-    against, not a competitor - it cheats by reading ``observation.state``.
+    direction) on the glyph grid, avoiding lava: face the key and pick it up,
+    face the door and unlock it, then walk onto the goal. It is the ceiling an
+    LLM agent is measured against, not a competitor - it cheats by reading
+    ``observation.state``.
     """
 
     name = "scripted"
 
     def reset(self, task_id: str, seed: int) -> None:
-        if not task_id.startswith("doorkey-"):
-            raise ValueError(f"scripted agent only knows DoorKey tasks, got {task_id!r}")
+        pass
 
     def act(self, observation: Observation) -> Decision:
         s = observation.state
-        if not s["carrying_key"] and s["key"] is not None:
-            target, final, goal_is_standing = s["key"], "pickup", False
-            thought = "get the key"
-        elif not s["door_open"]:
-            target, final, goal_is_standing = s["door"], "toggle", False
-            thought = "open the door"
+        if "grid" not in s:
+            raise ValueError("scripted agent needs a gridworld observation")
+        grid: list[str] = s["grid"]
+        keys, doors = _find(grid, "K"), _find(grid, "L") + _find(grid, "D")
+        if keys and not s.get("carrying_key"):
+            target, final, stand_on, thought = keys[0], "pickup", False, "get the key"
+        elif doors:
+            target, final, stand_on, thought = doors[0], "toggle", False, "open the door"
         else:
-            target, final, goal_is_standing = s["goal"], "forward", True
-            thought = "walk to the goal"
+            target, final, stand_on, thought = _find(grid, "G")[0], "forward", True, "go to goal"
 
-        plan = _plan(s, tuple(target), goal_is_standing)
+        ax, ay = s["agent"]
+        plan = _plan(grid, ((int(ax), int(ay)), int(s["direction"])), target, stand_on)
         if plan is None:
             return Decision("left", thought=f"{thought}: no path found, turning")
         if not plan:
@@ -63,29 +67,25 @@ class ScriptedDoorKeyAgent:
         return Decision(plan[0], thought=thought)
 
 
-def _passable(s: dict[str, Any], pos: Pos) -> bool:
-    n, (x, y) = s["size"], pos
-    if x <= 0 or y <= 0 or x >= n - 1 or y >= n - 1:
-        return False
-    if pos == tuple(s["door"]):
-        return bool(s["door_open"])
-    if x == s["wall_x"]:
-        return False
-    return s["key"] is None or pos != tuple(s["key"])
+def _find(grid: list[str], glyph: str) -> list[Pos]:
+    return [(x, y) for y, row in enumerate(grid) for x, c in enumerate(row) if c == glyph]
 
 
-def _plan(s: dict[str, Any], target: Pos, stand_on: bool) -> list[str] | None:
+def _plan(grid: list[str], start: tuple[Pos, int], target: Pos, stand_on: bool) -> list[str] | None:
     """Shortest turn/move sequence until we are facing ``target``.
 
     With ``stand_on`` the returned plan stops one ``forward`` short of standing
     on it, so the caller's final action (``forward``) completes it.
     """
-    start = (tuple(s["agent"]), int(s["direction"]))
 
     def facing(state: tuple[Pos, int]) -> Pos:
         (x, y), d = state
         dx, dy = DIRECTIONS[d]
         return (x + dx, y + dy)
+
+    def safe(pos: Pos) -> bool:
+        x, y = pos
+        return 0 <= y < len(grid) and 0 <= x < len(grid[y]) and grid[y][x] in SAFE
 
     queue: deque[tuple[tuple[Pos, int], list[str]]] = deque([(start, [])])
     seen = {start}
@@ -99,7 +99,7 @@ def _plan(s: dict[str, Any], target: Pos, stand_on: bool) -> list[str] | None:
             ("right", ((x, y), (d + 1) % 4)),
         ]
         ahead = facing(state)
-        if _passable(s, ahead) and not (stand_on and ahead == target):
+        if safe(ahead) and not (stand_on and ahead == target):
             moves.append(("forward", (ahead, d)))
         for action, nxt in moves:
             if nxt not in seen:

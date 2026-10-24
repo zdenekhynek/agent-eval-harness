@@ -1,4 +1,4 @@
-"""Command line: ``harness run``, ``harness report``, ``harness show``, ``harness list``."""
+"""Command line: ``harness run | report | compare | show | list``."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from harness.agents import AGENTS, Agent, canonical_name, is_llm, make_agent
 from harness.agents.llm import DEFAULT_MODEL
 from harness.envs import TASKS
 from harness.llmapi import AnthropicClient, APIError, MissingAPIKeyError
-from harness.runner import run_matrix
-from harness.score import format_table, score
+from harness.runner import RunConfigError, references, run_matrix
+from harness.score import compare, format_compare, format_overall, format_table, overall, score
 from harness.store import Store
 from harness.trace import Episode
 
@@ -67,6 +67,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 max_cost_usd=args.max_cost,
                 on_episode=progress,
             )
+        except RunConfigError as err:
+            print(err, file=sys.stderr)
+            return 2
         except APIError as err:
             print(f"\n{err}", file=sys.stderr)
             print(f"finished episodes are saved; resume with --run-id {run_id}", file=sys.stderr)
@@ -78,8 +81,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 f"raise --max-cost and resume with --run-id {run_id}"
             )
         print()
-        print(format_table(score(store.episodes(run_id))))
+        _print_report(store, store.episodes(run_id))
     return 0
+
+
+def _print_report(store: Store, episodes: list[Episode]) -> None:
+    refs = references(store, {e.task for e in episodes})
+    print(format_table(score(episodes, refs)))
+    table = format_overall(overall(episodes, refs))
+    if table and len(refs) > 1:
+        print()
+        print(table)
 
 
 def _resolve_run(store: Store, run_id: str | None) -> str | None:
@@ -99,7 +111,27 @@ def _cmd_report(args: argparse.Namespace) -> int:
             print(f"run {run_id!r} has no episodes", file=sys.stderr)
             return 1
         print(f"run {run_id}")
-        print(format_table(score(episodes)))
+        _print_report(store, episodes)
+    return 0
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    with Store(args.db) as store:
+        run_id = _resolve_run(store, args.run_id)
+        if run_id is None:
+            return 1
+        episodes = store.episodes(run_id)
+        if args.tasks:
+            episodes = [e for e in episodes if e.task in args.tasks]
+        agents = {e.agent for e in episodes}
+        missing = [a for a in (args.a, args.b) if a not in agents]
+        if missing:
+            known = ", ".join(sorted(agents)) or "none"
+            print(f"not in run {run_id}: {', '.join(missing)} (agents: {known})", file=sys.stderr)
+            return 1
+        refs = references(store, {e.task for e in episodes})
+        print(f"run {run_id}")
+        print(format_compare(compare(episodes, args.a, args.b, refs), args.a, args.b))
     return 0
 
 
@@ -160,6 +192,13 @@ def build_parser() -> argparse.ArgumentParser:
     report = sub.add_parser("report", help="score a run (latest by default)")
     report.add_argument("--run-id")
     report.set_defaults(func=_cmd_report)
+
+    cmp = sub.add_parser("compare", help="paired comparison of two agents on shared seeds")
+    cmp.add_argument("a", help="agent as recorded, e.g. react:claude-sonnet-5")
+    cmp.add_argument("b")
+    cmp.add_argument("--tasks", type=_csv, help="limit to these tasks")
+    cmp.add_argument("--run-id")
+    cmp.set_defaults(func=_cmd_compare)
 
     show = sub.add_parser("show", help="step through one episode's trace")
     show.add_argument("agent", help="as recorded, e.g. scripted or react:claude-sonnet-5")

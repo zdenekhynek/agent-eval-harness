@@ -11,13 +11,13 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from harness.agents.base import Agent, Decision
-from harness.agents.baselines import RandomAgent, ScriptedDoorKeyAgent
+from harness.agents.baselines import RandomAgent, ScriptedAgent
 from harness.agents.llm import DEFAULT_MODEL, LLMAgent, ReActAgent, ZeroShotAgent
 from harness.llmapi import AnthropicClient
 
 BASELINES: dict[str, Callable[[], Agent]] = {
     "random": RandomAgent,
-    "scripted": ScriptedDoorKeyAgent,
+    "scripted": ScriptedAgent,
 }
 STRATEGIES: dict[str, type[LLMAgent]] = {
     "zero-shot": ZeroShotAgent,

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from harness.score import Reference
 from harness.trace import Episode, StepRecord
 
 SCHEMA = """
@@ -33,6 +34,14 @@ CREATE TABLE IF NOT EXISTS episodes (
     output_tokens     INTEGER NOT NULL DEFAULT 0,
     cost_usd          REAL,
     PRIMARY KEY (run_id, agent, task, seed)
+);
+CREATE TABLE IF NOT EXISTS task_references (
+    task     TEXT NOT NULL,
+    version  TEXT NOT NULL,
+    floor    REAL NOT NULL,
+    ceiling  REAL NOT NULL,
+    n        INTEGER NOT NULL,
+    PRIMARY KEY (task, version)
 );
 """
 
@@ -95,6 +104,14 @@ class Store:
         )
         self.conn.commit()
 
+    def run_config(self, run_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT config_json FROM runs WHERE id=?", (run_id,)).fetchone()
+        return None if row is None else dict(json.loads(row["config_json"]))
+
+    def update_run_config(self, run_id: str, config: dict[str, Any]) -> None:
+        self.conn.execute("UPDATE runs SET config_json=? WHERE id=?", (json.dumps(config), run_id))
+        self.conn.commit()
+
     def runs(self) -> list[dict[str, Any]]:
         rows = self.conn.execute("SELECT * FROM runs ORDER BY created_at DESC, id").fetchall()
         return [dict(r) for r in rows]
@@ -104,6 +121,22 @@ class Store:
             "SELECT id FROM runs ORDER BY created_at DESC, rowid DESC LIMIT 1"
         ).fetchone()
         return None if row is None else str(row["id"])
+
+    # -------------------------------------------------------------- references
+
+    def reference(self, task: str, version: str) -> Reference | None:
+        row = self.conn.execute(
+            "SELECT floor, ceiling, n FROM task_references WHERE task=? AND version=?",
+            (task, version),
+        ).fetchone()
+        return None if row is None else Reference(row["floor"], row["ceiling"], row["n"])
+
+    def save_reference(self, task: str, version: str, ref: Reference) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO task_references VALUES (?, ?, ?, ?, ?)",
+            (task, version, ref.floor, ref.ceiling, ref.n),
+        )
+        self.conn.commit()
 
     # --------------------------------------------------------------- episodes
 

@@ -26,32 +26,30 @@ def test_layout_invariants() -> None:
 def test_locked_door_blocks_and_opens_only_with_key() -> None:
     env = DoorKeyEnv(5)
     env.reset(0)
-    st = env._state()
     # Put the agent directly west of the door, facing it, with the key elsewhere.
-    st.agent, st.direction = (st.door[0] - 1, st.door[1]), 0
-    st.key = (1, 1 if st.door[1] != 1 else 2)
+    env.agent, env.direction = (env.door[0] - 1, env.door[1]), 0
+    env.key = (1, 1 if env.door[1] != 1 else 2)
     env.step("forward")
-    assert env._state().agent != st.door
+    assert env.agent != env.door
     env.step("toggle")
-    assert env._state().door_locked, "toggle without key must not unlock"
-    st.carrying_key, st.key = True, None
+    assert env.door_locked, "toggle without key must not unlock"
+    env.carrying_key, env.key = True, None
     env.step("toggle")
-    assert not st.door_locked and st.door_open
+    assert not env.door_locked and env.door_open
     env.step("forward")
-    assert st.agent == st.door
+    assert env.agent == env.door
 
 
 def test_key_blocks_movement_until_picked_up() -> None:
     env = DoorKeyEnv(5)
     env.reset(0)
-    st = env._state()
-    st.agent, st.direction, st.key = (1, 1), 1, (1, 2)
+    env.agent, env.direction, env.key = (1, 1), 1, (1, 2)
     env.step("forward")
-    assert st.agent == (1, 1)
+    assert env.agent == (1, 1)
     env.step("pickup")
-    assert st.carrying_key and st.key is None
+    assert env.carrying_key and env.key is None
     env.step("forward")
-    assert st.agent == (1, 2)
+    assert env.agent == (1, 2)
 
 
 def test_invalid_action_raises() -> None:

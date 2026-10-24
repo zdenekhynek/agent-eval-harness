@@ -6,11 +6,22 @@ from collections.abc import Callable
 
 from harness.envs.base import Env, InvalidActionError, Observation, StepResult
 from harness.envs.doorkey import DoorKeyEnv
+from harness.envs.grid import GridEnv
+from harness.envs.navigation import EmptyEnv, LavaGapEnv
+
+_FAMILIES: dict[type[GridEnv], tuple[int, ...]] = {
+    EmptyEnv: (5, 6, 8),
+    LavaGapEnv: (5, 6, 7),
+    DoorKeyEnv: (5, 6, 8),
+}
+
+
+def _factory(cls: type[GridEnv], size: int) -> Callable[[], Env]:
+    return lambda: cls(size)
+
 
 TASKS: dict[str, Callable[[], Env]] = {
-    "doorkey-5x5": lambda: DoorKeyEnv(5),
-    "doorkey-6x6": lambda: DoorKeyEnv(6),
-    "doorkey-8x8": lambda: DoorKeyEnv(8),
+    f"{cls.name}-{n}x{n}": _factory(cls, n) for cls, sizes in _FAMILIES.items() for n in sizes
 }
 
 

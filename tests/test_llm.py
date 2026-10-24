@@ -23,7 +23,7 @@ from harness.llmapi import (
     Usage,
     cost_usd,
 )
-from harness.runner import run_episode, run_matrix
+from harness.runner import fingerprint, run_episode, run_matrix
 from harness.score import score
 from harness.store import Store
 
@@ -278,3 +278,16 @@ def test_live_react_makes_a_valid_move() -> None:
     decision = agent.act(env.reset(0))
     assert decision.action in env.reset(0).actions
     assert decision.input_tokens and decision.cost_usd
+
+
+def test_fingerprint_tracks_prompt_and_settings() -> None:
+    client = _client(FakeTransport([]))
+
+    def fp(spec: str, memory: int = 8) -> str | None:
+        return fingerprint(make_agent(spec, client=client, memory=memory))
+
+    assert fp("react") == fp("react") is not None
+    assert fp("react") != fp("zero-shot")
+    assert fp("react") != fp("react", memory=2)
+    assert fp("react") != fp("react:claude-haiku-4-5")
+    assert fingerprint(make_agent("scripted")) is None

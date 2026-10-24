@@ -14,6 +14,8 @@ Strategies:
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import deque
 from dataclasses import dataclass
 from typing import Any
@@ -24,6 +26,9 @@ from harness.llmapi import AnthropicClient, cost_usd
 
 DEFAULT_MODEL = "claude-sonnet-5"
 NO_ACTION = "<no action>"
+# Bump when the user-prompt layout in ``LLMAgent.user_prompt`` changes; the
+# prompt texts themselves are hashed directly into each agent's fingerprint.
+PROMPT_VERSION = 2
 
 ACTION_HELP = {
     "left": "turn 90 degrees counter-clockwise on the map (east -> north -> west -> south)",
@@ -38,7 +43,8 @@ SYSTEM_BASE = """You are an agent acting in a small gridworld, one action per tu
 Each turn you get the current observation and a list of your most recent actions.
 Rules:
 - You can only interact with the cell directly ahead of you, so turn to face things first.
-- Walls, keys lying on the floor and closed or locked doors block movement.
+- Walls, objects lying on the floor (such as keys) and closed or locked doors block movement.
+- Read the legend: some cells, such as lava, end the episode in failure if you step onto them.
 - If the map, your position, your facing and what you carry did not change after an
   action, that action had no effect - try something else.
 
@@ -47,7 +53,8 @@ Choose your action by calling the `act` tool exactly once."""
 REACT_SUFFIX = """
 
 Before calling `act`, think briefly in plain text: where you are, what you need next
-(key, door or goal), and which single action gets you closer. Keep it to a few sentences."""
+(for example a key, a door or the goal), and which single action gets you closer.
+Keep it to a few sentences."""
 
 
 @dataclass
@@ -59,6 +66,7 @@ class _Memory:
 
 class LLMAgent:
     strategy = "llm"
+    system = SYSTEM_BASE
     force_tool = True
     max_tokens = 256
 
@@ -83,8 +91,23 @@ class LLMAgent:
 
     # ---------------------------------------------------------------- prompts
 
+    def fingerprint(self) -> str:
+        """Short hash of the prompts and settings; a run refuses to resume if it changes."""
+        spec = {
+            "prompt_version": PROMPT_VERSION,
+            "strategy": self.strategy,
+            "model": self.model,
+            "system": self.system,
+            "action_help": ACTION_HELP,
+            "force_tool": self.force_tool,
+            "max_tokens": self.max_tokens,
+            "memory": self.memory_size,
+            "temperature": self.temperature,
+        }
+        return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
+
     def system_prompt(self, observation: Observation) -> str:
-        return SYSTEM_BASE
+        return self.system
 
     def user_prompt(self, observation: Observation) -> str:
         parts = []
@@ -154,11 +177,9 @@ class ZeroShotAgent(LLMAgent):
 
 class ReActAgent(LLMAgent):
     strategy = "react"
+    system = SYSTEM_BASE + REACT_SUFFIX
     force_tool = False
     max_tokens = 1024
-
-    def system_prompt(self, observation: Observation) -> str:
-        return SYSTEM_BASE + REACT_SUFFIX
 
 
 def _clip(text: str, limit: int) -> str:

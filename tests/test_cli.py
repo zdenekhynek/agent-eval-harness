@@ -17,6 +17,19 @@ def test_run_report_show(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert "SUCCESS" in capsys.readouterr().out
 
 
+def test_multi_task_report_and_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    db = str(tmp_path / "runs.db")
+    assert main(["--db", db, "run", "--seeds", "4", "--tasks", "empty-5x5,lavagap-5x5"]) == 0
+    out = capsys.readouterr().out
+    assert "norm [95% CI]" in out and "overall" in out
+
+    assert main(["--db", db, "compare", "scripted", "random"]) == 0
+    out = capsys.readouterr().out
+    assert "A better" in out and "all" in out
+
+    assert main(["--db", db, "compare", "scripted", "react"]) == 1
+
+
 def test_unknown_agent_is_rejected(tmp_path: Path) -> None:
     assert main(["--db", str(tmp_path / "x.db"), "run", "--agents", "gpt-99"]) == 2
 

@@ -2,7 +2,8 @@
 
 Re-running with the same ``run_id`` is safe: episodes already in the store are
 skipped, so an interrupted run (or one stopped by the cost cap, or by an API
-outage) resumes where it stopped.
+outage) resumes where it stopped. A resume is refused if an agent's prompt
+fingerprint or the step cap changed, so one run never mixes two experiments.
 """
 
 from __future__ import annotations
@@ -10,15 +11,27 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from statistics import mean
+from typing import Any
 
+from harness import __version__
 from harness.agents import Agent, canonical_name, make_agent
 from harness.envs import Env, InvalidActionError, make_env
+from harness.score import Reference, References
 from harness.store import Store
 from harness.trace import Episode, StepRecord
 
 # An agent that keeps emitting unusable actions is stopped rather than
 # burning the whole step budget (and, for LLM agents, tokens).
 MAX_CONSECUTIVE_INVALID = 5
+
+# Normalisation anchors come from a fixed seed set, never from the run being
+# scored, so a task's 0 and 1 mean the same thing in every report.
+REFERENCE_SEEDS = range(100)
+
+
+class RunConfigError(ValueError):
+    """Resuming a run with settings that would make its episodes incomparable."""
 
 
 @dataclass
@@ -74,7 +87,7 @@ def run_episode(
         ep.total_return += result.reward
         obs = result.observation
         if result.terminated or result.truncated:
-            ep.success = result.terminated
+            ep.success = result.success
             ep.truncated = result.truncated
             break
     else:
@@ -104,12 +117,9 @@ def run_matrix(
     """
     specs, tasks, seeds = list(agents), list(tasks), list(seeds)
     names = {spec: canonical_name(spec) for spec in specs}
-    store.ensure_run(
-        run_id,
-        {"agents": list(names.values()), "tasks": tasks, "seeds": seeds, "max_steps": max_steps},
-    )
+    built = {spec: agent_factory(spec) for spec in specs}
+    _record_config(store, run_id, built, names, tasks, seeds, max_steps)
     summary = RunSummary(run_id=run_id, ran=0, skipped=0)
-    built: dict[str, Agent] = {}
 
     for task in tasks:
         env = make_env(task)
@@ -121,11 +131,85 @@ def run_matrix(
                 if max_cost_usd is not None and summary.cost_usd >= max_cost_usd:
                     summary.stopped_for_budget = True
                     return summary
-                agent = built.get(spec) or built.setdefault(spec, agent_factory(spec))
-                ep = run_episode(agent, env, seed, run_id, max_steps=max_steps)
+                ep = run_episode(built[spec], env, seed, run_id, max_steps=max_steps)
                 store.save_episode(ep)
                 summary.ran += 1
                 summary.cost_usd += ep.cost_usd or 0.0
                 if on_episode:
                     on_episode(ep)
     return summary
+
+
+def fingerprint(agent: Agent) -> str | None:
+    """Hash of everything that shapes an agent's behaviour, if it exposes one."""
+    fp = getattr(agent, "fingerprint", None)
+    return str(fp()) if callable(fp) else None
+
+
+def _record_config(
+    store: Store,
+    run_id: str,
+    agents: dict[str, Agent],
+    names: dict[str, str],
+    tasks: list[str],
+    seeds: list[int],
+    max_steps: int | None,
+) -> None:
+    fingerprints = {names[spec]: fingerprint(a) for spec, a in agents.items()}
+    old = store.run_config(run_id)
+    if old is None:
+        store.ensure_run(
+            run_id,
+            {
+                "harness_version": __version__,
+                "agents": list(names.values()),
+                "tasks": tasks,
+                "seeds": seeds,
+                "max_steps": max_steps,
+                "fingerprints": fingerprints,
+            },
+        )
+        return
+
+    if old.get("max_steps") != max_steps:
+
+        def cap(v: int | None) -> str:
+            return "no --max-steps" if v is None else f"--max-steps {v}"
+
+        raise RunConfigError(
+            f"run {run_id!r} used {cap(old.get('max_steps'))}, not {cap(max_steps)}; "
+            "resume with the same cap or start a new run"
+        )
+    old_fps: dict[str, Any] = old.get("fingerprints", {})
+    changed = [a for a, fp in fingerprints.items() if a in old_fps and old_fps[a] != fp]
+    if changed:
+        raise RunConfigError(
+            f"prompt or settings changed since run {run_id!r} started for: "
+            f"{', '.join(changed)}; start a new run so results are not mixed"
+        )
+    old["agents"] = list(dict.fromkeys([*old.get("agents", []), *names.values()]))
+    old["tasks"] = list(dict.fromkeys([*old.get("tasks", []), *tasks]))
+    old["seeds"] = sorted({*old.get("seeds", []), *seeds})
+    old["fingerprints"] = {**old_fps, **fingerprints}
+    store.update_run_config(run_id, old)
+
+
+def compute_reference(task: str, seeds: Iterable[int] = REFERENCE_SEEDS) -> Reference:
+    """Mean return of the random floor and scripted ceiling on ``task``."""
+    env = make_env(task)
+    seeds = list(seeds)
+    floor = mean(run_episode(make_agent("random"), env, s, "ref").total_return for s in seeds)
+    ceiling = mean(run_episode(make_agent("scripted"), env, s, "ref").total_return for s in seeds)
+    return Reference(floor=floor, ceiling=ceiling, n=len(seeds))
+
+
+def references(store: Store, tasks: Iterable[str]) -> References:
+    """Normalisation anchors for ``tasks``, computed once per harness version and cached."""
+    refs: References = {}
+    for task in sorted(set(tasks)):
+        ref = store.reference(task, __version__)
+        if ref is None:
+            ref = compute_reference(task)
+            store.save_reference(task, __version__, ref)
+        refs[task] = ref
+    return refs

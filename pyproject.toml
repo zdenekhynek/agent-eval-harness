@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-eval-harness"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evaluate LLM agents across task suites: traces, statistics, leaderboard."
 readme = "README.md"
 license = "MIT"

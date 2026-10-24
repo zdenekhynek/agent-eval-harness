@@ -30,9 +30,10 @@ class Observation:
 class StepResult:
     observation: Observation
     reward: float
-    terminated: bool  # reached a terminal state (goal reached)
+    terminated: bool  # reached a terminal state: the goal, or a failure such as lava
     truncated: bool  # ran out of steps
     info: dict[str, Any] = field(default_factory=dict)
+    success: bool = False  # terminated by completing the mission
 
 
 class InvalidActionError(ValueError):
