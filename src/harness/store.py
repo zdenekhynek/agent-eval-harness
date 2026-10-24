@@ -113,8 +113,18 @@ class Store:
         self.conn.commit()
 
     def runs(self) -> list[dict[str, Any]]:
-        rows = self.conn.execute("SELECT * FROM runs ORDER BY created_at DESC, id").fetchall()
-        return [dict(r) for r in rows]
+        """Newest first, with ``config`` decoded."""
+        rows = self.conn.execute(
+            "SELECT * FROM runs ORDER BY created_at DESC, rowid DESC"
+        ).fetchall()
+        return [{**dict(r), "config": json.loads(r["config_json"])} for r in rows]
+
+    def run_totals(self) -> dict[str, tuple[int, float | None]]:
+        """Episode count and total cost (None if unpriced) per run."""
+        rows = self.conn.execute(
+            "SELECT run_id, COUNT(*) AS n, SUM(cost_usd) AS cost FROM episodes GROUP BY run_id"
+        ).fetchall()
+        return {r["run_id"]: (r["n"], r["cost"]) for r in rows}
 
     def latest_run_id(self) -> str | None:
         row = self.conn.execute(

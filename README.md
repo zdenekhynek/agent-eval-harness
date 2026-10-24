@@ -6,9 +6,10 @@ A small, honest harness for measuring LLM agents: run agents across a suite of
 tasks and seeds, record every step (observation, reasoning, action, reward,
 tokens, cost), score them with proper statistics, and explore the results.
 
-> Status: **milestone 2 — methodology.** Three task families, 95% confidence
-> intervals, scores normalised between a random floor and a scripted ceiling,
-> and paired agent comparisons. Dashboard next.
+> Status: **milestone 3 — dashboard.** A leaderboard with confidence intervals
+> and paired "ahead / tied" verdicts, per-task small multiples, cost against
+> score, and a step-through transcript viewer that redraws the grid the agent
+> saw. Prompt-strategy study next.
 
 ## Quick start
 
@@ -66,6 +67,34 @@ API outage too — finished episodes are saved as they complete).
 Each step is a fresh request (system prompt, the last `--memory` actions, the
 current map), so cost per step stays flat however long an episode runs.
 
+## Dashboard
+
+```bash
+uv sync --extra serve
+npm --prefix web ci && npm --prefix web run build
+uv run harness serve                 # http://127.0.0.1:8000, live over runs.db
+```
+
+- **Leaderboard** — agents ranked by normalised score with a 95% CI bar on one
+  shared axis. Each rank says whether it is *ahead* of the next (a paired
+  comparison on shared seeds puts the CI of the difference above zero) or
+  *tied*, so close point estimates are never over-read.
+- **By task** — the same forest plot per task, same axis and agent order.
+- **Cost against score** — what each LLM agent spends per episode for what it scores.
+- **Episodes** — one cell per seed, shaded by score, hollow when failed. Each
+  opens a **transcript**: the grid redrawn from the text the agent saw,
+  its action, reasoning, tokens, cost and latency, with play, scrub and
+  arrow-key stepping, and a timeline marking invalid actions.
+
+`harness serve` and `harness export --out site` produce the same JSON at
+the same paths (`data/runs.json`, `data/runs/<run>/…`), so the built app
+works against either — live locally, or as static files. `scripts/build_site.sh`
+builds the static site; the *Dashboard* workflow deploys it to GitHub Pages,
+using `sample/runs.db` when one is committed and a fresh baseline run otherwise.
+
+For frontend work, run `harness serve` and `npm --prefix web run dev`; Vite
+proxies `data/` to it.
+
 ## Tasks
 
 Dependency-free reimplementations of MiniGrid tasks, each isolating a skill:
@@ -102,12 +131,15 @@ Bootstraps use a fixed RNG seed, so a report is reproducible.
 | Runner | `runner.py` | Runs the agent × task × seed matrix. Re-running a `--run-id` resumes, guarded by agent fingerprints; invalid actions are recorded, and five in a row end the episode. Computes normalisation references. |
 | Store | `store.py` | SQLite: one row per episode with token and cost totals and the full trace as JSON; run configs; cached references. Older databases are migrated on open. |
 | Scoring | `score.py` | Wilson and bootstrap CIs, normalised and overall scores, paired comparisons, plus steps-to-goal, invalid-action rate, tokens and $ per episode. |
+| Views | `views.py` | The dashboard's JSON documents: leaderboard scopes with paired verdicts, per-episode traces with grid frames parsed from the observation text. `export` writes them to disk. |
+| Server | `server.py` | FastAPI app (optional `serve` extra) serving the same documents live, plus the built web app. |
+| Web | `web/` | React + TypeScript + Vite, TanStack Query, hand-built SVG charts; hash routing so deep links work on static hosting. |
 
 ## Roadmap
 
 1. ~~**LLM agent** — Anthropic client, text-observation prompt, tool-calling actions, token/cost/latency in traces, ReAct loop.~~
 2. ~~**Methodology** — multi-seed confidence intervals, more tasks, normalised scores.~~
-3. **Dashboard** — leaderboard with CI bars and a step-through transcript viewer.
+3. ~~**Dashboard** — leaderboard with CI bars and a step-through transcript viewer.~~
 4. **Strategy study** — zero-shot vs few-shot vs ReAct vs Reflexion vs self-consistency, a text-adventure env and hand-written puzzles, plus a write-up.
 
 ## License

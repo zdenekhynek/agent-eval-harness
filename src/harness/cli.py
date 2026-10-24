@@ -1,4 +1,4 @@
-"""Command line: ``harness run | report | compare | show | list``."""
+"""Command line: ``harness run | report | compare | show | list | export | serve``."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 from datetime import datetime
+from pathlib import Path
 
 from harness.agents import AGENTS, Agent, canonical_name, is_llm, make_agent
 from harness.agents.llm import DEFAULT_MODEL
@@ -17,6 +18,7 @@ from harness.store import Store
 from harness.trace import Episode
 
 DEFAULT_DB = "runs.db"
+DEFAULT_WEB = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 
 def _csv(value: str) -> list[str]:
@@ -164,6 +166,41 @@ def _cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    from harness.views import export
+
+    with Store(args.db) as store:
+        run_ids = args.run_ids or None
+        if run_ids is None and args.latest:
+            latest = _resolve_run(store, None)
+            if latest is None:
+                return 1
+            run_ids = [latest]
+        written = export(store, Path(args.out), run_ids)
+    print(f"wrote {written} files to {args.out}/data")
+    return 0
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+
+        from harness.server import create_app
+    except ImportError:
+        print("serving needs the extra: uv sync --extra serve", file=sys.stderr)
+        return 2
+    web = Path(args.web)
+    if not (web / "index.html").exists():
+        print(f"no built dashboard at {web}; serving the JSON API only", file=sys.stderr)
+        print("build it with: npm --prefix web ci && npm --prefix web run build", file=sys.stderr)
+        app = create_app(args.db)
+    else:
+        app = create_app(args.db, web)
+    print(f"dashboard on http://{args.host}:{args.port}/  (db: {args.db})")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
 def _cmd_list(args: argparse.Namespace) -> int:
     print("agents:", ", ".join(AGENTS), f"(LLM agents take :<model>, default {DEFAULT_MODEL})")
     print("tasks: ", ", ".join(sorted(TASKS)))
@@ -206,6 +243,18 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("seed", type=int)
     show.add_argument("--run-id")
     show.set_defaults(func=_cmd_show)
+
+    exp = sub.add_parser("export", help="write the dashboard's JSON for static hosting")
+    exp.add_argument("--out", default="site", help="site root; JSON lands in <out>/data")
+    exp.add_argument("--run-ids", type=_csv, help="runs to export (default: all)")
+    exp.add_argument("--latest", action="store_true", help="export only the latest run")
+    exp.set_defaults(func=_cmd_export)
+
+    srv = sub.add_parser("serve", help="serve the dashboard over the store, live")
+    srv.add_argument("--host", default="127.0.0.1")
+    srv.add_argument("--port", type=int, default=8000)
+    srv.add_argument("--web", default=str(DEFAULT_WEB), help="built dashboard directory")
+    srv.set_defaults(func=_cmd_serve)
 
     lst = sub.add_parser("list", help="list agents and tasks")
     lst.set_defaults(func=_cmd_list)
