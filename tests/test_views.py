@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -116,3 +117,33 @@ def test_cli_export(db: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     assert main(["--db", str(db), "export", "--out", str(out), "--latest"]) == 0
     assert "wrote 26 files" in capsys.readouterr().out
     assert (out / "data/runs/r/leaderboard.json").exists()
+
+
+def test_final_frame_shows_the_lava_the_agent_died_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("harness.runner.canonical_name", lambda spec: spec)
+
+    class Reckless:
+        name = "reckless"
+
+        def reset(self, task_id: str, seed: int) -> None:
+            pass
+
+        def act(self, observation: Any) -> Any:
+            from harness.agents import Decision
+
+            return Decision("forward")
+
+    with Store(tmp_path / "runs.db") as store:
+        # The agent starts at (1, 1) facing east; walk east until something stops it.
+        run_matrix(
+            store, "r", ["reckless"], ["lavagap-5x5"], range(3), agent_factory=lambda _: Reckless()
+        )
+        died = [e for e in store.episodes("r") if not e.success and not e.truncated]
+        assert died, "expected at least one lava death walking straight east"
+        doc = episode_doc(store, "r", "reckless", "lavagap-5x5", died[0].seed)
+    assert doc is not None
+    frame = doc["final"]["frame"]
+    x, y = frame["agent"]
+    assert frame["grid"][y][x] == "~" and frame["died"]

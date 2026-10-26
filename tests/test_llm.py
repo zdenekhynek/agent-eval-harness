@@ -115,7 +115,26 @@ def test_zero_shot_forces_the_tool() -> None:
     req = transport.requests[0]
     assert req["tool_choice"] == {"type": "tool", "name": "act"}
     assert req["model"] == "claude-haiku-4-5"
+    assert req["thinking"] == {"type": "disabled"}
     assert "think briefly" not in req["system"]
+
+
+def test_thinking_is_an_explicit_named_variant() -> None:
+    transport = FakeTransport([_ok(_reply("left", text="reasoning")), _ok(_reply("right"))])
+    react = make_agent("react", client=_client(transport))
+    react.reset("empty-5x5", 0)
+    react.act(make_env("empty-5x5").reset(0))
+    assert transport.requests[0]["thinking"] == {"type": "disabled"}
+
+    zs = make_agent("zero-shot+think", client=_client(transport))
+    assert zs.name == "zero-shot+think:claude-sonnet-5"
+    zs.reset("empty-5x5", 0)
+    zs.act(make_env("empty-5x5").reset(0))
+    req = transport.requests[1]
+    assert req["thinking"] == {"type": "adaptive"}
+    # The API rejects forced tool choice with thinking, so the variant falls back to auto.
+    assert req["tool_choice"] == {"type": "auto"}
+    assert req["max_tokens"] >= 4096
 
 
 def test_memory_window_is_bounded() -> None:
@@ -200,6 +219,10 @@ def test_agent_specs() -> None:
     assert parse_spec("react:claude-haiku-4-5") == ("react", "claude-haiku-4-5")
     assert canonical_name("zero-shot", "claude-haiku-4-5") == "zero-shot:claude-haiku-4-5"
     assert canonical_name("scripted") == "scripted"
+    assert parse_spec("react+think") == ("react+think", "claude-sonnet-5")
+    assert canonical_name("react+think:claude-haiku-4-5") == "react+think:claude-haiku-4-5"
+    with pytest.raises(KeyError):
+        parse_spec("random+think")
     with pytest.raises(KeyError):
         parse_spec("scripted:claude-sonnet-5")
     with pytest.raises(KeyError):
@@ -290,4 +313,5 @@ def test_fingerprint_tracks_prompt_and_settings() -> None:
     assert fp("react") != fp("zero-shot")
     assert fp("react") != fp("react", memory=2)
     assert fp("react") != fp("react:claude-haiku-4-5")
+    assert fp("react") != fp("react+think")
     assert fingerprint(make_agent("scripted")) is None

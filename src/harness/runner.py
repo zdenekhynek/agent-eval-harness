@@ -194,22 +194,41 @@ def _record_config(
     store.update_run_config(run_id, old)
 
 
-def compute_reference(task: str, seeds: Iterable[int] = REFERENCE_SEEDS) -> Reference:
-    """Mean return of the random floor and scripted ceiling on ``task``."""
+def compute_reference(
+    task: str, max_steps: int | None = None, seeds: Iterable[int] = REFERENCE_SEEDS
+) -> Reference:
+    """Mean return of the random floor and scripted ceiling on ``task``.
+
+    ``max_steps`` must match the run being scored: a step cap truncates random
+    episodes that would otherwise have stumbled onto the goal, which lowers
+    the floor. Anchors computed without the cap would misplace 0.
+    """
     env = make_env(task)
     seeds = list(seeds)
-    floor = mean(run_episode(make_agent("random"), env, s, "ref").total_return for s in seeds)
-    ceiling = mean(run_episode(make_agent("scripted"), env, s, "ref").total_return for s in seeds)
-    return Reference(floor=floor, ceiling=ceiling, n=len(seeds))
+
+    def mean_return(agent: str) -> float:
+        return mean(
+            run_episode(make_agent(agent), env, s, "ref", max_steps=max_steps).total_return
+            for s in seeds
+        )
+
+    return Reference(floor=mean_return("random"), ceiling=mean_return("scripted"), n=len(seeds))
 
 
-def references(store: Store, tasks: Iterable[str]) -> References:
-    """Normalisation anchors for ``tasks``, computed once per harness version and cached."""
+def references(store: Store, tasks: Iterable[str], max_steps: int | None = None) -> References:
+    """Normalisation anchors for ``tasks`` under a step cap, cached per harness version."""
+    key = __version__ if max_steps is None else f"{__version__}+cap{max_steps}"
     refs: References = {}
     for task in sorted(set(tasks)):
-        ref = store.reference(task, __version__)
+        ref = store.reference(task, key)
         if ref is None:
-            ref = compute_reference(task)
-            store.save_reference(task, __version__, ref)
+            ref = compute_reference(task, max_steps)
+            store.save_reference(task, key, ref)
         refs[task] = ref
     return refs
+
+
+def run_references(store: Store, run_id: str, tasks: Iterable[str]) -> References:
+    """Anchors for a run's episodes, under the same ``--max-steps`` the run used."""
+    config = store.run_config(run_id) or {}
+    return references(store, tasks, config.get("max_steps"))

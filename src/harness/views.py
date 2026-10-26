@@ -21,7 +21,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from harness.runner import references
+from harness.runner import run_references
 from harness.score import Comparison, References, Score, compare, overall, score
 from harness.store import Store
 from harness.trace import Episode
@@ -71,7 +71,7 @@ def leaderboard_doc(store: Store, run_id: str) -> Doc | None:
     if not episodes:
         return None
     tasks = sorted({e.task for e in episodes})
-    refs = references(store, tasks)
+    refs = run_references(store, run_id, tasks)
     scores = score(episodes, refs)
 
     scopes = [_overall_scope(episodes, scores, refs, tasks)]
@@ -94,6 +94,7 @@ def leaderboard_doc(store: Store, run_id: str) -> Doc | None:
         "run_id": run_id,
         "tasks": tasks,
         "agents": sorted({e.agent for e in episodes}),
+        "max_steps": (store.run_config(run_id) or {}).get("max_steps"),
         "references": {
             t: {"floor": r.floor, "ceiling": r.ceiling, "n": r.n} for t, r in refs.items()
         },
@@ -209,7 +210,7 @@ def episode_doc(store: Store, run_id: str, agent: str, task: str, seed: int) -> 
     ep = store.episode(run_id, agent, task, seed)
     if ep is None:
         return None
-    ref = references(store, [task])[task]
+    ref = run_references(store, run_id, [task])[task]
     return {
         "run_id": run_id,
         "agent": ep.agent,
@@ -242,8 +243,23 @@ def episode_doc(store: Store, run_id: str, agent: str, task: str, seed: int) -> 
             }
             for s in ep.trace
         ],
-        "final": {"observation": ep.final_observation, "frame": parse_frame(ep.final_observation)},
+        "final": {"observation": ep.final_observation, "frame": _final_frame(ep)},
     }
+
+
+def _final_frame(ep: Episode) -> Doc | None:
+    """The last frame, with the hazard that ended the episode shown under the agent.
+
+    The text map draws the agent over its cell, so a lava death would render
+    as standing on floor. Terminal failures only happen on lava.
+    """
+    frame = parse_frame(ep.final_observation)
+    if frame and frame["agent"] and not ep.success and not ep.truncated:
+        x, y = frame["agent"]
+        row = frame["grid"][y]
+        frame["grid"][y] = row[:x] + "~" + row[x + 1 :]
+        frame["died"] = True
+    return frame
 
 
 def parse_frame(observation: str) -> Doc | None:

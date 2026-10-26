@@ -1,7 +1,8 @@
 """Agent registry.
 
-Agents are named by spec: ``random``, ``scripted``, or ``<strategy>[:<model>]``
-for LLM agents, e.g. ``react`` or ``react:claude-haiku-4-5``. An LLM agent's
+Agents are named by spec: ``random``, ``scripted``, or ``<strategy>[+think][:<model>]``
+for LLM agents, e.g. ``react``, ``react:claude-haiku-4-5`` or ``react+think`` (with
+adaptive extended thinking; without the suffix thinking is explicitly off). An LLM agent's
 recorded name always includes its model, so runs with different models sit
 side by side on the leaderboard.
 """
@@ -12,7 +13,13 @@ from collections.abc import Callable
 
 from harness.agents.base import Agent, Decision
 from harness.agents.baselines import RandomAgent, ScriptedAgent
-from harness.agents.llm import DEFAULT_MODEL, LLMAgent, ReActAgent, ZeroShotAgent
+from harness.agents.llm import (
+    DEFAULT_MODEL,
+    THINKING_SUFFIX,
+    LLMAgent,
+    ReActAgent,
+    ZeroShotAgent,
+)
 from harness.llmapi import AnthropicClient
 
 BASELINES: dict[str, Callable[[], Agent]] = {
@@ -27,13 +34,14 @@ AGENTS: tuple[str, ...] = (*BASELINES, *STRATEGIES)
 
 
 def parse_spec(spec: str, default_model: str = DEFAULT_MODEL) -> tuple[str, str | None]:
-    """Split ``react:claude-haiku-4-5`` into (strategy, model). Baselines have no model."""
+    """Split ``react+think:claude-haiku-4-5`` into (strategy, model); the strategy keeps
+    any ``+think`` suffix. Baselines have no model."""
     strategy, _, model = spec.partition(":")
     if strategy in BASELINES:
         if model:
             raise KeyError(f"baseline {strategy!r} takes no model")
         return strategy, None
-    if strategy in STRATEGIES:
+    if strategy.removesuffix(THINKING_SUFFIX) in STRATEGIES:
         return strategy, model or default_model
     raise KeyError(f"unknown agent {spec!r}; known: {', '.join(AGENTS)}")
 
@@ -44,7 +52,7 @@ def canonical_name(spec: str, default_model: str = DEFAULT_MODEL) -> str:
 
 
 def is_llm(spec: str) -> bool:
-    return spec.partition(":")[0] in STRATEGIES
+    return spec.partition(":")[0].removesuffix(THINKING_SUFFIX) in STRATEGIES
 
 
 def make_agent(
@@ -56,7 +64,13 @@ def make_agent(
     strategy, model = parse_spec(spec, default_model)
     if model is None:
         return BASELINES[strategy]()
-    return STRATEGIES[strategy](client or AnthropicClient(), model=model, memory=memory)
+    base = strategy.removesuffix(THINKING_SUFFIX)
+    return STRATEGIES[base](
+        client or AnthropicClient(),
+        model=model,
+        memory=memory,
+        thinking=strategy.endswith(THINKING_SUFFIX),
+    )
 
 
 __all__ = [

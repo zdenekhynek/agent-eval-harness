@@ -2,7 +2,14 @@ import type { Interval } from "./types";
 
 export const pct = (v: number) => `${Math.round(v * 100)}%`;
 export const num2 = (v: number) => (Math.abs(v) < 0.005 ? "0.00" : v.toFixed(2));
-export const signed2 = (v: number) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(2);
+/** Signed difference; small non-zero values get a third decimal so "+0.00" never appears. */
+export const signed2 = (v: number) => {
+  const a = Math.abs(v);
+  const digits = a > 0 && a < 0.01 ? 3 : 2;
+  return (v >= 0 ? "+" : "−") + a.toFixed(digits);
+};
+
+export const signedCi = ([lo, hi]: Interval) => `[${signed2(lo)}, ${signed2(hi)}]`;
 export const ci2 = ([lo, hi]: Interval) => `[${num2(lo)}, ${num2(hi)}]`;
 export const ciPct = ([lo, hi]: Interval) => `[${pct(lo)}, ${pct(hi)}]`;
 

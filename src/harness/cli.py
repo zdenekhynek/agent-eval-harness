@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 from datetime import datetime
@@ -12,7 +13,7 @@ from harness.agents import AGENTS, Agent, canonical_name, is_llm, make_agent
 from harness.agents.llm import DEFAULT_MODEL
 from harness.envs import TASKS
 from harness.llmapi import AnthropicClient, APIError, MissingAPIKeyError
-from harness.runner import RunConfigError, references, run_matrix
+from harness.runner import RunConfigError, run_matrix, run_references
 from harness.score import compare, format_compare, format_overall, format_table, overall, score
 from harness.store import Store
 from harness.trace import Episode
@@ -83,12 +84,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 f"raise --max-cost and resume with --run-id {run_id}"
             )
         print()
-        _print_report(store, store.episodes(run_id))
+        _print_report(store, run_id, store.episodes(run_id))
     return 0
 
 
-def _print_report(store: Store, episodes: list[Episode]) -> None:
-    refs = references(store, {e.task for e in episodes})
+def _print_report(store: Store, run_id: str, episodes: list[Episode]) -> None:
+    refs = run_references(store, run_id, {e.task for e in episodes})
     print(format_table(score(episodes, refs)))
     table = format_overall(overall(episodes, refs))
     if table and len(refs) > 1:
@@ -113,7 +114,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
             print(f"run {run_id!r} has no episodes", file=sys.stderr)
             return 1
         print(f"run {run_id}")
-        _print_report(store, episodes)
+        _print_report(store, run_id, episodes)
     return 0
 
 
@@ -131,7 +132,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             known = ", ".join(sorted(agents)) or "none"
             print(f"not in run {run_id}: {', '.join(missing)} (agents: {known})", file=sys.stderr)
             return 1
-        refs = references(store, {e.task for e in episodes})
+        refs = run_references(store, run_id, {e.task for e in episodes})
         print(f"run {run_id}")
         print(format_compare(compare(episodes, args.a, args.b, refs), args.a, args.b))
     return 0
@@ -261,7 +262,33 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def load_dotenv(path: str | Path = ".env") -> list[str]:
+    """Set ``KEY=value`` lines from ``path`` into the environment.
+
+    Variables already set win, so a real environment always overrides the
+    file. Keeping the API key here rather than in a shell profile keeps it
+    out of every other program's environment. Returns the names it set.
+    """
+    file = Path(path)
+    if not file.is_file():
+        return []
+    loaded = []
+    for raw in file.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.removeprefix("export ").partition("=")
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    load_dotenv()
     args = build_parser().parse_args(argv)
     code: int = args.func(args)
     return code

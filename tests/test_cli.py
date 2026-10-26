@@ -1,8 +1,9 @@
+import os
 from pathlib import Path
 
 import pytest
 
-from harness.cli import main
+from harness.cli import load_dotenv, main
 
 
 def test_run_report_show(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -36,3 +37,24 @@ def test_unknown_agent_is_rejected(tmp_path: Path) -> None:
 
 def test_report_without_runs(tmp_path: Path) -> None:
     assert main(["--db", str(tmp_path / "x.db"), "report"]) == 1
+
+
+def test_dotenv_fills_unset_variables_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env = tmp_path / ".env"
+    env.write_text(
+        "# comment\n"
+        'export HARNESS_T_A="quoted value"\n'
+        "HARNESS_T_B=plain\n"
+        "HARNESS_T_C=from-file\n"
+        "not a line\n"
+    )
+    for key in ("HARNESS_T_A", "HARNESS_T_B"):
+        monkeypatch.setenv(key, "")  # registers the variable so pytest restores it
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("HARNESS_T_C", "from-shell")
+
+    assert load_dotenv(env) == ["HARNESS_T_A", "HARNESS_T_B"]
+    assert os.environ["HARNESS_T_A"] == "quoted value"
+    assert os.environ["HARNESS_T_B"] == "plain"
+    assert os.environ["HARNESS_T_C"] == "from-shell"
+    assert load_dotenv(tmp_path / "missing") == []

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agentSlug, episodePath } from "./api";
+import { placeLabels } from "./components/CostScatter";
 import { seqStep } from "./components/EpisodeStrips";
 import { compact, num2, signed2, splitAgent, usd } from "./format";
 import { href, parseRoute } from "./route";
@@ -31,6 +32,8 @@ describe("format", () => {
   it("formats numbers for tables", () => {
     expect(num2(-0.001)).toBe("0.00");
     expect(signed2(-0.25)).toBe("−0.25");
+    expect(signed2(0.004)).toBe("+0.004");
+    expect(signed2(0)).toBe("+0.00");
     expect(compact(12_345)).toBe("12.3K");
     expect(usd(0.0012)).toBe("$0.0012");
     expect(usd(null)).toBe("–");
@@ -57,5 +60,17 @@ describe("scales", () => {
     expect(seqStep(0.5)).toBe(3);
     expect(seqStep(1)).toBe(6);
     expect(seqStep(null)).toBe(0);
+  });
+});
+
+describe("scatter labels", () => {
+  it("never places a label over a dot or another label, dropping it instead", () => {
+    const placed = placeLabels([
+      { agent: "react:claude-sonnet-5", x: 300, y: 50 },
+      { agent: "zero-shot:claude-sonnet-5", x: 305, y: 52 },
+      { agent: "react:claude-haiku-4-5", x: 100, y: 200 },
+    ]);
+    expect(placed.has("react:claude-haiku-4-5")).toBe(true);
+    expect(placed.size).toBeGreaterThanOrEqual(2);
   });
 });

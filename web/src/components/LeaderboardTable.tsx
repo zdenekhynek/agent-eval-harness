@@ -1,4 +1,4 @@
-import { ci2, ciPct, compact, num2, pct, signed2, usd } from "../format";
+import { ci2, ciPct, compact, num2, pct, signed2, signedCi, usd } from "../format";
 import { linear, normDomain } from "../scale";
 import type { Scope } from "../types";
 import { AgentName } from "./AgentName";
@@ -70,11 +70,13 @@ export function LeaderboardTable({ scope, hot, onHover }: Props) {
                 {r.vs_next ? (
                   r.vs_next.ahead ? (
                     <>
-                      <strong>ahead</strong> by {signed2(r.vs_next.diff)} {ci2(r.vs_next.diff_ci)}
+                      <strong>ahead</strong> by {signed2(r.vs_next.diff)}{" "}
+                      <span className="note">{signedCi(r.vs_next.diff_ci)}</span>
                     </>
                   ) : (
                     <>
-                      <strong>tied</strong> · {signed2(r.vs_next.diff)} {ci2(r.vs_next.diff_ci)}
+                      <strong>tied</strong> · {signed2(r.vs_next.diff)}{" "}
+                      <span className="note">{signedCi(r.vs_next.diff_ci)}</span>
                     </>
                   )
                 ) : (

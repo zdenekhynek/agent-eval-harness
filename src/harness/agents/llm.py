@@ -10,6 +10,14 @@ Strategies:
   tool choice), so there is no visible reasoning. Measures raw capability.
 * ``react`` - the model reasons in plain text first, then calls ``act``.
   The reasoning is recorded as the step's thought.
+
+Extended thinking is a separate, explicit variable. By default every strategy
+sends ``thinking: disabled``: some models (Sonnet 5) otherwise think
+privately by default, which would hand ReAct a hidden reasoning channel that
+forced-tool zero-shot never gets and confound the comparison. A ``+think``
+suffix (``react+think``) turns on adaptive thinking as its own leaderboard
+entry; the API does not allow forced tool choice alongside thinking, so
+``zero-shot+think`` calls ``act`` with ``tool_choice: auto``.
 """
 
 from __future__ import annotations
@@ -64,6 +72,10 @@ class _Memory:
     thought: str | None
 
 
+THINKING_SUFFIX = "+think"
+THINKING_MAX_TOKENS = 4096  # thinking tokens count toward max_tokens
+
+
 class LLMAgent:
     strategy = "llm"
     system = SYSTEM_BASE
@@ -76,12 +88,15 @@ class LLMAgent:
         model: str = DEFAULT_MODEL,
         memory: int = 8,
         temperature: float | None = None,
+        thinking: bool = False,
     ) -> None:
         self.client = client
         self.model = model
         self.memory_size = memory
         self.temperature = temperature
-        self.name = f"{self.strategy}:{model}"
+        self.thinking = thinking
+        suffix = THINKING_SUFFIX if thinking else ""
+        self.name = f"{self.strategy}{suffix}:{model}"
         self._history: deque[_Memory] = deque(maxlen=memory)
         self._t = 0
 
@@ -103,6 +118,7 @@ class LLMAgent:
             "max_tokens": self.max_tokens,
             "memory": self.memory_size,
             "temperature": self.temperature,
+            "thinking": self.thinking,
         }
         return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
 
@@ -145,10 +161,15 @@ class LLMAgent:
             model=self.model,
             system=self.system_prompt(observation),
             messages=[{"role": "user", "content": self.user_prompt(observation)}],
-            max_tokens=self.max_tokens,
+            max_tokens=THINKING_MAX_TOKENS if self.thinking else self.max_tokens,
             tools=[self.tool(observation)],
-            tool_choice={"type": "tool", "name": "act"} if self.force_tool else {"type": "auto"},
+            tool_choice=(
+                {"type": "tool", "name": "act"}
+                if self.force_tool and not self.thinking
+                else {"type": "auto"}
+            ),
             temperature=self.temperature,
+            thinking={"type": "adaptive"} if self.thinking else {"type": "disabled"},
         )
         action = NO_ACTION
         for block in response.tool_uses():

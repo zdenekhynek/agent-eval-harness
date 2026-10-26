@@ -13,6 +13,7 @@ from harness.runner import (
     references,
     run_episode,
     run_matrix,
+    run_references,
 )
 from harness.score import format_table, score
 from harness.store import Store
@@ -126,3 +127,16 @@ def test_references_bracket_baselines_and_are_cached(tmp_path: Path) -> None:
         assert ref.floor < 0.2 < 0.9 < ref.ceiling and ref.n == len(REFERENCE_SEEDS)
         assert ref.normalise(ref.floor) == 0 and ref.normalise(ref.ceiling) == 1
         assert store.reference("lavagap-5x5", __version__) == ref
+
+
+def test_references_follow_the_runs_step_cap(tmp_path: Path) -> None:
+    with Store(tmp_path / "runs.db") as store:
+        uncapped = references(store, ["doorkey-5x5"])["doorkey-5x5"]
+        capped = references(store, ["doorkey-5x5"], max_steps=40)["doorkey-5x5"]
+        # Random rarely finds the goal in 40 steps, so the floor drops; scripted
+        # never needs that many, so the ceiling holds.
+        assert capped.floor < uncapped.floor
+        assert capped.ceiling == uncapped.ceiling
+
+        run_matrix(store, "capped", ["random"], ["doorkey-5x5"], range(2), max_steps=40)
+        assert run_references(store, "capped", ["doorkey-5x5"])["doorkey-5x5"] == capped

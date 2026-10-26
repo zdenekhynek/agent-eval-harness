@@ -11,6 +11,36 @@ tokens, cost), score them with proper statistics, and explore the results.
 > score, and a step-through transcript viewer that redraws the grid the agent
 > saw. Prompt-strategy study next.
 
+## First results
+
+[**Live dashboard →**](https://zdenekhynek.github.io/agent-eval-harness/) · run `sample-v1`:
+3 gridworld tasks (5×5) × 10 held-out seeds, 40-step cap, $3.33 in total.
+
+| Agent | Normalised score, 95% CI | Success | $/episode |
+|---|---|---|---|
+| react+think · Sonnet 5 | 1.00 [0.99, 1.00] | 100% | 0.026 |
+| react · Sonnet 5 | 0.99 [0.98, 1.00] | 100% | 0.024 |
+| zero-shot · Sonnet 5 | 0.99 [0.98, 1.00] | 100% | 0.019 |
+| **react · Haiku 4.5** | **0.96 [0.93, 0.98]** | 100% | 0.023 |
+| **zero-shot · Haiku 4.5** | **0.66 [0.52, 0.80]** | 70% | 0.019 |
+
+- **ReAct matters a lot for the smaller model.** On Haiku 4.5, reasoning before
+  acting lifts the score by **+0.30 [+0.15, +0.45]** (paired on seeds), entirely on
+  the tasks that need it. Zero-shot walked into lava 3 times in 10 LavaGap
+  episodes, once on step 0 with `Directly ahead: '~'` in its observation, and
+  ran out of steps on 4 of 10 DoorKeys. ReAct never failed.
+- **Sonnet 5 saturates these tasks.** Every strategy solves every seed; the
+  differences left are a step or two per episode. The paired test calls some of
+  them "ahead", but +0.005 is statistically detectable, not practically
+  meaningful. Separating strong models needs harder tasks (larger rooms, more
+  subgoals).
+- **Hidden thinking would have confounded the study.** Sonnet 5 thinks privately
+  by default, so out of the box "ReAct" had a reasoning channel that forced-tool
+  "zero-shot" did not. Thinking is now explicitly off unless an agent is named
+  `+think`.
+
+Small sample (n = 10 per task): read the intervals, not the point estimates.
+
 ## Quick start
 
 ```bash
@@ -45,10 +75,12 @@ metric is the normalised score, not the success rate.
 ### LLM agents
 
 LLM agents are named `<strategy>[:<model>]` — `react`, `zero-shot:claude-haiku-4-5`.
-They need `ANTHROPIC_API_KEY`; baselines don't. Always cap spend:
+They need `ANTHROPIC_API_KEY`; baselines don't. Put it in a `.env` file in the
+repo root (gitignored; read by `harness`, ignored by tests, never overriding a
+variable already set) rather than a shell profile. Always cap spend:
 
 ```bash
-export ANTHROPIC_API_KEY=...
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env
 uv run harness run --agents scripted,zero-shot,react \
     --tasks empty-5x5,lavagap-5x5,doorkey-5x5 --seeds 5 --max-steps 60 --max-cost 2
 uv run harness compare react:claude-sonnet-5 zero-shot:claude-sonnet-5
@@ -63,6 +95,7 @@ API outage too — finished episodes are saved as they complete).
 |---|---|
 | `zero-shot` | Forced `act` tool call, no visible reasoning — raw capability. |
 | `react` | Reasons in plain text, then calls `act`; the reasoning is the step's thought. |
+| `<strategy>+think` | The same strategy with adaptive extended thinking on, e.g. `react+think`. Without the suffix every strategy sends `thinking: disabled`, so prompting is the only variable. Needs a model with adaptive thinking (Sonnet 5, not Haiku 4.5). |
 
 Each step is a fresh request (system prompt, the last `--memory` actions, the
 current map), so cost per step stays flat however long an episode runs.

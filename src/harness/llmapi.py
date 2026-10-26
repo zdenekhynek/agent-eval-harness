@@ -141,6 +141,7 @@ class AnthropicClient:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | None = None,
         temperature: float | None = None,
+        thinking: dict[str, Any] | None = None,
     ) -> Response:
         payload: dict[str, Any] = {
             "model": model,
@@ -154,6 +155,8 @@ class AnthropicClient:
             payload["tool_choice"] = tool_choice
         if temperature is not None:
             payload["temperature"] = temperature
+        if thinking is not None:
+            payload["thinking"] = thinking
 
         headers = {
             "x-api-key": self.api_key,

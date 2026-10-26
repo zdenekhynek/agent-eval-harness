@@ -73,10 +73,12 @@ export function CostScatter({ rows, hot }: { rows: Row[]; hot: string | null }) 
             )}
             <circle cx={cx} cy={cy} r={12} fill="transparent" />
             <circle cx={cx} cy={cy} r={5} fill="var(--accent)" stroke="var(--surface)" strokeWidth={2} />
-            <text {...labels.get(r.agent)} style={{ fill: "var(--ink-2)" }}>
-              {strategy}
-              {model ? ` · ${model}` : ""}
-            </text>
+            {labels.has(r.agent) && (
+              <text {...labels.get(r.agent)} style={{ fill: "var(--ink-2)" }}>
+                {strategy}
+                {model ? ` · ${model}` : ""}
+              </text>
+            )}
           </g>
         );
       })}
@@ -90,33 +92,36 @@ interface Placed {
   textAnchor: "start" | "end" | "middle";
 }
 
+type Box = { x0: number; x1: number; y0: number; y1: number };
+const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+
 /**
  * Direct labels that never move off their dot: try right of the dot, then
- * left, then below, and keep the first spot that overlaps no earlier label.
+ * left, below and above, and keep the first spot clear of every dot and every
+ * earlier label. A label with no clear spot is left off - the tooltip and the
+ * leaderboard table still carry it - rather than stacked on a neighbour.
  */
 export function placeLabels(points: { agent: string; x: number; y: number }[]): Map<string, Placed> {
   const CHAR = 6.2;
-  const taken: { x0: number; x1: number; y0: number; y1: number }[] = [];
+  const DOT = 7;
+  const taken: Box[] = points.map((p) => ({ x0: p.x - DOT, x1: p.x + DOT, y0: p.y - DOT, y1: p.y + DOT }));
   const placed = new Map<string, Placed>();
   for (const p of [...points].sort((a, b) => a.y - b.y)) {
-    const label = p.agent.replace(":", " · ");
-    const w = label.length * CHAR;
+    const w = p.agent.replace(":", " · ").length * CHAR;
     const options: [Placed, number][] = [
       [{ x: p.x + 10, y: p.y + 4, textAnchor: "start" }, p.x + 10],
       [{ x: p.x - 10, y: p.y + 4, textAnchor: "end" }, p.x - 10 - w],
       [{ x: p.x, y: p.y + 20, textAnchor: "middle" }, p.x - w / 2],
       [{ x: p.x, y: p.y - 12, textAnchor: "middle" }, p.x - w / 2],
     ];
-    let choice = options[0]![0];
     for (const [opt, x0] of options) {
       const box = { x0, x1: x0 + w, y0: opt.y - 10, y1: opt.y + 3 };
-      if (!taken.some((b) => b.x0 < box.x1 && box.x0 < b.x1 && b.y0 < box.y1 && box.y0 < b.y1)) {
-        choice = opt;
+      if (!taken.some((b) => overlaps(b, box))) {
+        placed.set(p.agent, opt);
         taken.push(box);
         break;
       }
     }
-    placed.set(p.agent, choice);
   }
   return placed;
 }
