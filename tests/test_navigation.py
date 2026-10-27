@@ -1,7 +1,7 @@
 import pytest
 
 from harness.envs import make_env
-from harness.envs.navigation import EmptyEnv, LavaGapEnv
+from harness.envs.navigation import EmptyEnv, LavaCrossingEnv, LavaGapEnv
 
 
 @pytest.mark.parametrize("task", ["empty-8x8", "lavagap-7x7"])
@@ -57,3 +57,20 @@ def test_navigation_tasks_only_offer_movement() -> None:
     obs = make_env("empty-5x5").reset(0)
     assert obs.actions == ("left", "right", "forward")
     assert "lava" in make_env("lavagap-5x5").reset(0).text
+
+
+@pytest.mark.parametrize("rivers", [1, 2, 3])
+def test_lavacrossing_rivers_each_have_one_opening(rivers: int) -> None:
+    env = LavaCrossingEnv(9, rivers)
+    assert env.task_id == f"lavacrossing-n{rivers}"
+    for seed in range(40):
+        env.reset(seed)
+        assert env.agent == (1, 1) and env.cell((7, 7)) == "G"
+        cols = {x for x, _ in env.lava if sum((x, y) in env.lava for y in range(1, 8)) >= 6}
+        rows = {y for _, y in env.lava if sum((x, y) in env.lava for x in range(1, 8)) >= 6}
+        assert len(cols) + len(rows) == rivers
+        # Each river is 7 cells long and loses exactly one to its opening; where two
+        # rivers cross they share a cell, which is never an opening on a monotone path.
+        crossings = len(cols) * len(rows)
+        assert len(env.lava) == 7 * rivers - rivers - crossings
+    assert make_env(f"lavacrossing-n{rivers}").reset(3).text == env.reset(3).text

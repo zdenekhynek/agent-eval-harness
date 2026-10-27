@@ -9,8 +9,10 @@ knows which of the two it is talking to.
 A leaderboard is a list of *scopes* - all tasks pooled, then each task - and
 each scope ranks agents by normalised score. Next to every rank sits a paired
 comparison with the agent ranked just below it: "ahead" only when the 95% CI
-of the per-seed difference excludes zero, otherwise "tied". That is what
-"CI overlap shown, not just point estimates" means in practice.
+of the per-seed difference excludes zero and the difference is at least the
+minimum meaningful effect, "marginal" when it is real but smaller, otherwise
+"tied". That is what "CI overlap shown, not just point estimates" means in
+practice.
 """
 
 from __future__ import annotations
@@ -167,7 +169,8 @@ def _with_vs_next(
                 "pairs": result.pairs,
                 "diff": result.diff,
                 "diff_ci": list(result.diff_ci),
-                "ahead": result.diff_ci[0] > 0,
+                "status": result.status,
+                "min_effect": result.min_effect,
             }
         )
     if rows:

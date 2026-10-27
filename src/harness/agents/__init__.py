@@ -16,8 +16,11 @@ from harness.agents.baselines import RandomAgent, ScriptedAgent
 from harness.agents.llm import (
     DEFAULT_MODEL,
     THINKING_SUFFIX,
+    FewShotAgent,
     LLMAgent,
     ReActAgent,
+    ReflexionAgent,
+    SelfConsistencyAgent,
     ZeroShotAgent,
 )
 from harness.llmapi import AnthropicClient
@@ -28,7 +31,10 @@ BASELINES: dict[str, Callable[[], Agent]] = {
 }
 STRATEGIES: dict[str, type[LLMAgent]] = {
     "zero-shot": ZeroShotAgent,
+    "few-shot": FewShotAgent,
     "react": ReActAgent,
+    "reflexion": ReflexionAgent,
+    "self-consistency": SelfConsistencyAgent,
 }
 AGENTS: tuple[str, ...] = (*BASELINES, *STRATEGIES)
 

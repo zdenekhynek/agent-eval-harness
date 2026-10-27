@@ -17,7 +17,9 @@ export interface VsNext {
   pairs: number;
   diff: number;
   diff_ci: Interval;
-  ahead: boolean;
+  /** ahead: CI excludes 0 and |diff| >= min_effect; marginal: real but smaller. */
+  status: "ahead" | "marginal" | "tied";
+  min_effect: number;
 }
 
 export interface Row {

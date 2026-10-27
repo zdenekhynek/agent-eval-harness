@@ -83,6 +83,7 @@ function Board({
   setHot: (a: string | null) => void;
 }) {
   const scope = board.scopes.find((s) => s.id === scopeId) ?? board.scopes[0]!;
+  const minEffect = scope.rows.find((r) => r.vs_next)?.vs_next?.min_effect ?? 0.05;
   const overallScope = board.scopes[0]!;
   const taskScopes = board.scopes.slice(1);
   const order = scope.rows.map((r) => r.agent);
@@ -133,8 +134,9 @@ function Board({
         <h2>Leaderboard · {scope.label}</h2>
         <p className="sub">
           Ranked by normalised score: 0 is the random agent, 1 the scripted solver.
-          {scope.id === "all" && " Tasks weigh equally."} “Ahead” means a paired comparison on
-          shared seeds puts the 95% CI of the difference above zero; otherwise the two are tied.
+          {scope.id === "all" && " Tasks weigh equally."} Each rank is compared with the next on
+          shared seeds: “ahead” when the 95% CI of the difference is above zero and the difference
+          is at least {minEffect}, “marginally ahead” when it is real but smaller, otherwise tied.
         </p>
         <LeaderboardTable scope={scope} hot={hot} onHover={setHot} />
         {scope.excluded.length > 0 && (

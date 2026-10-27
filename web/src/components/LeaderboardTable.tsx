@@ -4,6 +4,8 @@ import type { Scope } from "../types";
 import { AgentName } from "./AgentName";
 import { CI_WIDTH, CIAxis, CIBar } from "./CIBar";
 
+const STATUS_LABEL = { ahead: "ahead", marginal: "marginally ahead", tied: "tied" } as const;
+
 interface Props {
   scope: Scope;
   hot: string | null;
@@ -67,20 +69,13 @@ export function LeaderboardTable({ scope, hot, onHover }: Props) {
               <td className="num">{r.tokens !== null ? compact(r.tokens) : "–"}</td>
               <td className="num">{usd(r.cost_usd)}</td>
               <td className="vs">
-                {r.vs_next ? (
-                  r.vs_next.ahead ? (
-                    <>
-                      <strong>ahead</strong> by {signed2(r.vs_next.diff)}{" "}
-                      <span className="note">{signedCi(r.vs_next.diff_ci)}</span>
-                    </>
-                  ) : (
-                    <>
-                      <strong>tied</strong> · {signed2(r.vs_next.diff)}{" "}
-                      <span className="note">{signedCi(r.vs_next.diff_ci)}</span>
-                    </>
-                  )
-                ) : (
-                  ""
+                {r.vs_next && (
+                  <>
+                    <strong>{STATUS_LABEL[r.vs_next.status]}</strong>
+                    {r.vs_next.status === "tied" ? " · " : " by "}
+                    {signed2(r.vs_next.diff)}{" "}
+                    <span className="note">{signedCi(r.vs_next.diff_ci)}</span>
+                  </>
                 )}
               </td>
             </tr>

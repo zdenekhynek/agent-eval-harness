@@ -14,7 +14,15 @@ from harness.agents.llm import DEFAULT_MODEL
 from harness.envs import TASKS
 from harness.llmapi import AnthropicClient, APIError, MissingAPIKeyError
 from harness.runner import RunConfigError, run_matrix, run_references
-from harness.score import compare, format_compare, format_overall, format_table, overall, score
+from harness.score import (
+    MIN_EFFECT,
+    compare,
+    format_compare,
+    format_overall,
+    format_table,
+    overall,
+    score,
+)
 from harness.store import Store
 from harness.trace import Episode
 
@@ -134,7 +142,8 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             return 1
         refs = run_references(store, run_id, {e.task for e in episodes})
         print(f"run {run_id}")
-        print(format_compare(compare(episodes, args.a, args.b, refs), args.a, args.b))
+        rows = compare(episodes, args.a, args.b, refs, min_effect=args.min_effect)
+        print(format_compare(rows, args.a, args.b))
     return 0
 
 
@@ -235,6 +244,12 @@ def build_parser() -> argparse.ArgumentParser:
     cmp.add_argument("a", help="agent as recorded, e.g. react:claude-sonnet-5")
     cmp.add_argument("b")
     cmp.add_argument("--tasks", type=_csv, help="limit to these tasks")
+    cmp.add_argument(
+        "--min-effect",
+        type=float,
+        default=MIN_EFFECT,
+        help=f"smallest difference that counts as a win (default {MIN_EFFECT})",
+    )
     cmp.add_argument("--run-id")
     cmp.set_defaults(func=_cmd_compare)
 

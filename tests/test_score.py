@@ -86,3 +86,16 @@ def test_compare_falls_back_to_success_rate_and_can_be_inconclusive() -> None:
     assert row.metric == "success" and row.verdict == "no clear difference"
     assert "success rate" in format_compare([row], "x", "y")
     assert "no seeds" in format_compare(compare(eps, "x", "z"), "x", "z")
+
+
+def test_tiny_but_real_differences_are_marginal_not_wins() -> None:
+    # Every seed differs by exactly 0.01: the CI excludes zero, but the effect is tiny.
+    eps = [_ep("a", "a", s, 0.91) for s in range(10)]
+    eps += [_ep("b", "a", s, 0.90) for s in range(10)]
+    (row,) = compare(eps, "a", "b", REFS)
+    assert row.diff_ci[0] > 0
+    assert row.status == "marginal" and "marginally" in row.verdict
+    (strict,) = compare(eps, "a", "b", REFS, min_effect=0.005)
+    assert strict.status == "ahead"
+    (flipped,) = compare(eps, "b", "a", REFS)
+    assert flipped.status == "marginal" and flipped.verdict.startswith("B")

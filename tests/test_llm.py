@@ -315,3 +315,58 @@ def test_fingerprint_tracks_prompt_and_settings() -> None:
     assert fp("react") != fp("react:claude-haiku-4-5")
     assert fp("react") != fp("react+think")
     assert fingerprint(make_agent("scripted")) is None
+
+
+# ------------------------------------------------------------- strategies
+
+
+def test_few_shot_adds_generated_examples_to_zero_shot() -> None:
+    transport = FakeTransport([_ok(_reply("left"))])
+    agent = make_agent("few-shot", client=_client(transport))
+    agent.reset("empty-5x5", 0)
+    agent.act(make_env("empty-5x5").reset(0))
+    req = transport.requests[0]
+    assert req["tool_choice"] == {"type": "tool", "name": "act"}
+    for lesson in ("Correct action: pickup", "Correct action: toggle", "Lava is directly ahead"):
+        assert lesson in req["system"]
+    # Examples come from seeds no run evaluates.
+    assert "Example 4" in req["system"]
+
+
+def test_reflexion_reflects_when_a_situation_repeats() -> None:
+    # Four lefts bring the agent back to where it started: step 4 repeats step 0.
+    replies = [_ok(_reply("left", text="turning")) for _ in range(4)]
+    replies += [_ok(_reply(None, text="I spun in a circle; move forward instead."))]
+    replies += [_ok(_reply("forward", text="going forward"))]
+    transport = FakeTransport(replies)
+    agent = make_agent("reflexion", client=_client(transport))
+    env = make_env("empty-5x5")
+    obs = env.reset(0)
+    agent.reset("empty-5x5", 0)
+    decisions = []
+    for _ in range(5):
+        d = agent.act(obs)
+        decisions.append(d)
+        obs = env.step(d.action).observation
+
+    assert len(transport.requests) == 6
+    reflect, act = transport.requests[4], transport.requests[5]
+    assert (
+        "tools" not in reflect and "already occurred at step 0" in reflect["messages"][0]["content"]
+    )
+    assert "I spun in a circle" in act["messages"][0]["content"]  # the lesson is now in the prompt
+    last = decisions[-1]
+    assert last.action == "forward" and last.thought.startswith("Reflection: I spun")
+    assert last.input_tokens == 800  # both calls are billed to the step
+
+
+def test_self_consistency_votes_and_bills_every_sample() -> None:
+    transport = FakeTransport(
+        [_ok(_reply(a, text=f"I pick {a}")) for a in ("forward", "left", "forward")]
+    )
+    agent = make_agent("self-consistency", client=_client(transport))
+    agent.reset("empty-5x5", 0)
+    d = agent.act(make_env("empty-5x5").reset(0))
+    assert d.action == "forward"
+    assert d.thought.startswith("Votes: forward x2, left x1.")
+    assert len(transport.requests) == 3 and d.input_tokens == 1200 and d.output_tokens == 90

@@ -9,7 +9,11 @@
   with more seeds does not dominate.
 * **Comparisons** between two agents are paired on seeds: both saw the same
   layouts, so the bootstrap runs on per-seed differences, which is far tighter
-  than comparing two independent intervals.
+  than comparing two independent intervals. A difference counts as a win
+  only when its CI excludes zero *and* it is at least ``MIN_EFFECT``:
+  near-deterministic agents give such tight intervals that a one-step
+  difference on one seed is "significant" without meaning anything. Smaller
+  but real differences are reported as *marginal*.
 
 Bootstraps use a fixed RNG seed, so a report is reproducible.
 """
@@ -27,6 +31,9 @@ from harness.trace import Episode
 
 Z95 = 1.959964
 RESAMPLES = 2000
+# Smallest difference worth calling a win: 5% of the random-to-scripted gap
+# (or 5 points of success rate when there are no references).
+MIN_EFFECT = 0.05
 Interval = tuple[float, float]
 
 
@@ -194,19 +201,35 @@ class Comparison:
     b: float
     diff: float
     diff_ci: Interval
+    min_effect: float = MIN_EFFECT
+
+    @property
+    def status(self) -> str:
+        """``ahead`` / ``behind`` (real and big enough), ``marginal`` (real but small), ``tied``."""
+        lo, hi = self.diff_ci
+        if lo > 0:
+            return "ahead" if self.diff >= self.min_effect else "marginal"
+        if hi < 0:
+            return "behind" if -self.diff >= self.min_effect else "marginal"
+        return "tied"
 
     @property
     def verdict(self) -> str:
-        lo, hi = self.diff_ci
-        if lo > 0:
-            return "A better"
-        if hi < 0:
-            return "B better"
-        return "no clear difference"
+        better = "A" if self.diff > 0 else "B"
+        return {
+            "ahead": "A better",
+            "behind": "B better",
+            "marginal": f"{better} marginally better (< {self.min_effect:g})",
+            "tied": "no clear difference",
+        }[self.status]
 
 
 def compare(
-    episodes: list[Episode], a: str, b: str, references: References | None = None
+    episodes: list[Episode],
+    a: str,
+    b: str,
+    references: References | None = None,
+    min_effect: float = MIN_EFFECT,
 ) -> list[Comparison]:
     """Paired comparison of agents ``a`` and ``b``, per task and pooled across tasks."""
     references = references or {}
@@ -235,7 +258,16 @@ def compare(
             continue
         diffs = [x - y for x, y in zip(xs, ys, strict=True)]
         rows.append(
-            Comparison(task, len(xs), metric, mean(xs), mean(ys), mean(diffs), bootstrap_ci(diffs))
+            Comparison(
+                task,
+                len(xs),
+                metric,
+                mean(xs),
+                mean(ys),
+                mean(diffs),
+                bootstrap_ci(diffs),
+                min_effect,
+            )
         )
         per_task.append((mean(xs), mean(ys), diffs))
 
@@ -250,6 +282,7 @@ def compare(
                 mean(y for _, y, _ in per_task),
                 mean(mean(g) for g in groups),
                 stratified_bootstrap_ci(groups),
+                min_effect,
             )
         )
     return rows
@@ -313,7 +346,11 @@ def format_compare(rows: list[Comparison], a: str, b: str) -> str:
     task_w = max([len("task"), *(len(r.task) for r in rows)])
     spec = ".0%" if pct else ".2f"
     header = f"{'task':<{task_w}} {'pairs':>5} {'A':>6} {'B':>6} {'A - B [95% CI]':>22}  verdict"
-    lines = [f"A = {a}\nB = {b}\npaired on seeds, metric: {label}", header, "-" * len(header)]
+    intro = (
+        f"A = {a}\nB = {b}\npaired on seeds, metric: {label}, "
+        f"minimum meaningful difference {rows[0].min_effect:g}"
+    )
+    lines = [intro, header, "-" * len(header)]
     for r in rows:
         diff = f"{r.diff:+.2f} [{r.diff_ci[0]:+.2f},{r.diff_ci[1]:+.2f}]"
         lines.append(

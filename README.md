@@ -30,10 +30,10 @@ tokens, cost), score them with proper statistics, and explore the results.
   episodes, once on step 0 with `Directly ahead: '~'` in its observation, and
   ran out of steps on 4 of 10 DoorKeys. ReAct never failed.
 - **Sonnet 5 saturates these tasks.** Every strategy solves every seed; the
-  differences left are a step or two per episode. The paired test calls some of
-  them "ahead", but +0.005 is statistically detectable, not practically
-  meaningful. Separating strong models needs harder tasks (larger rooms, more
-  subgoals).
+  differences left are a step or two per episode, real but well under the
+  0.05 minimum effect, so the leaderboard reports them as *marginal*. The
+  harder LavaCrossing tasks separate strong models: in a first look, Sonnet 5
+  zero-shot ran out of steps on `lavacrossing-n2` where ReAct solved it in 21.
 - **Hidden thinking would have confounded the study.** Sonnet 5 thinks privately
   by default, so out of the box "ReAct" had a reasoning channel that forced-tool
   "zero-shot" did not. Thinking is now explicitly off unless an agent is named
@@ -94,7 +94,10 @@ API outage too — finished episodes are saved as they complete).
 | Strategy | How it acts |
 |---|---|
 | `zero-shot` | Forced `act` tool call, no visible reasoning — raw capability. |
+| `few-shot` | Zero-shot plus four worked examples (turning, key, door, refusing lava), generated from scripted episodes on seeds no run evaluates. |
 | `react` | Reasons in plain text, then calls `act`; the reasoning is the step's thought. |
+| `reflexion` | ReAct plus in-episode self-reflection: when a situation repeats (a loop), the agent first writes a lesson that stays in its prompt. One attempt per seed, like every strategy. |
+| `self-consistency` | Three ReAct samples in parallel; the majority action wins. Costs about 3×. |
 | `<strategy>+think` | The same strategy with adaptive extended thinking on, e.g. `react+think`. Without the suffix every strategy sends `thinking: disabled`, so prompting is the only variable. Needs a model with adaptive thinking (Sonnet 5, not Haiku 4.5). |
 
 Each step is a fresh request (system prompt, the last `--memory` actions, the
@@ -137,6 +140,7 @@ Dependency-free reimplementations of MiniGrid tasks, each isolating a skill:
 | `empty` | 5, 6, 8 | spatial navigation | `Empty-Random`: random start pose, goal in the corner. |
 | `lavagap` | 5, 6, 7 | reading the map before moving | `LavaGapS<N>`: stepping on lava ends the episode with reward 0. Few distinct layouts at small sizes. |
 | `doorkey` | 5, 6, 8 | multi-step planning | Key, then door, then goal. |
+| `lavacrossing-n1…n3` | 9 | route-finding past hazards | `LavaCrossingS9N<k>`: 1–3 lava rivers, one opening each, along a random monotone path. |
 
 Iterate on prompts with the default seeds; report final numbers on held-out
 seeds (`--seed-start 1000`) so a prompt tuned on seeds 0–19 is not graded on them.
@@ -148,7 +152,7 @@ seeds (`--seed-start 1000`) so a prompt tuned on seeds 0–19 is not graded on t
 | How sure are we about a success rate? | Wilson 95% interval — honest at 0/n and n/n, where small LLM runs land. |
 | How do tasks with different reward scales combine? | Normalised score: 0 = the random agent's mean return, 1 = the scripted solver's, measured on 100 fixed reference seeds (cached per harness version), never on the run being scored. |
 | What is an agent's overall score? | Mean of per-task normalised scores with a bootstrap stratified by task, so tasks weigh equally. An agent missing a task is left out rather than scored on an easier subset. |
-| Is agent A really better than B? | `harness compare A B`: paired bootstrap on per-seed differences (both agents saw the same layouts), per task and pooled. The verdict stays "no clear difference" unless the 95% CI excludes 0. |
+| Is agent A really better than B? | `harness compare A B`: paired bootstrap on per-seed differences (both agents saw the same layouts), per task and pooled. A win needs the 95% CI to exclude 0 **and** a difference of at least 0.05 (`--min-effect`); a real but smaller difference is reported as *marginal*, because near-deterministic agents make even one step on one seed "significant". |
 | Did the prompt change halfway through a run? | Each LLM agent has a fingerprint (prompts, model, memory, temperature, max tokens). Resuming a run with a different fingerprint or `--max-steps` is refused. |
 
 Bootstraps use a fixed RNG seed, so a report is reproducible.

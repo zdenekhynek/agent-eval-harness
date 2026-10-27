@@ -52,7 +52,7 @@ def test_leaderboard_ranks_with_paired_verdicts(db: Path) -> None:
     for scope in doc["scopes"]:
         top, bottom = scope["rows"]
         assert (top["agent"], top["rank"], bottom["rank"]) == ("scripted", 1, 2)
-        assert top["vs_next"]["agent"] == "random" and top["vs_next"]["ahead"]
+        assert top["vs_next"]["agent"] == "random" and top["vs_next"]["status"] == "ahead"
         assert bottom["vs_next"] is None
     assert doc["scopes"][0]["rows"][0]["success_ci"] is None  # pooled: no single CI
     assert len(doc["episodes"]) == 2 * 2 * 6
