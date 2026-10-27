@@ -41,6 +41,9 @@ tokens, cost), score them with proper statistics, and explore the results.
 
 Small sample (n = 10 per task): read the intervals, not the point estimates.
 
+Write-up (draft): [Measuring LLM agents](docs/measuring-llm-agents.md) — the results and the
+three measurement mistakes it took to get them right.
+
 ## Quick start
 
 ```bash
